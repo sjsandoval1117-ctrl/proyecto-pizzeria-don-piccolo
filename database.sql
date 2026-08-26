@@ -1,0 +1,94 @@
+DROP DATABASE IF EXISTS pizzeria_don_piccolo;
+CREATE DATABASE pizzeria_don_piccolo CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE pizzeria_don_piccolo;
+
+CREATE TABLE cliente (
+    id_cliente INT AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(100) NOT NULL,
+    telefono VARCHAR(20) NOT NULL,
+    direccion VARCHAR(150) NOT NULL,
+    correo VARCHAR(100) UNIQUE NOT NULL,
+    fecha_registro DATETIME DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+CREATE TABLE pizza (
+    id_pizza INT AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(80) NOT NULL,
+    tamano ENUM('Personal', 'Mediana', 'Familiar') NOT NULL,
+    precio_base DECIMAL(10, 2) NOT NULL,
+    tipo ENUM('clasica', 'especial', 'vegetariana') NOT NULL,
+    disponible BOOLEAN DEFAULT TRUE
+) ENGINE=InnoDB;
+
+CREATE TABLE ingrediente (
+    id_ingrediente INT AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(80) NOT NULL,
+    stock_actual DECIMAL(10, 2) NOT NULL,
+    stock_minimo DECIMAL(10, 2) NOT NULL,
+    costo_unitario DECIMAL(10, 2) NOT NULL,
+    unidad_medida VARCHAR(20) NOT NULL
+) ENGINE=InnoDB;
+
+CREATE TABLE receta (
+    id_pizza INT NOT NULL,
+    id_ingrediente INT NOT NULL,
+    cantidad_requerida DECIMAL(10, 2) NOT NULL,
+    PRIMARY KEY (id_pizza, id_ingrediente),
+    FOREIGN KEY (id_pizza) REFERENCES pizza(id_pizza) ON DELETE CASCADE,
+    FOREIGN KEY (id_ingrediente) REFERENCES ingrediente(id_ingrediente) ON DELETE RESTRICT
+) ENGINE=InnoDB;
+
+CREATE TABLE repartidor (
+    id_repartidor INT AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(100) NOT NULL,
+    zona_asignada VARCHAR(80) NOT NULL,
+    estado ENUM('disponible', 'no disponible') DEFAULT 'disponible'
+) ENGINE=InnoDB;
+
+CREATE TABLE pedido (
+    id_pedido INT AUTO_INCREMENT PRIMARY KEY,
+    id_cliente INT NOT NULL,
+    fecha_hora DATETIME DEFAULT CURRENT_TIMESTAMP,
+    metodo_pago ENUM('efectivo', 'tarjeta', 'app') NOT NULL,
+    estado ENUM('pendiente', 'en preparacion', 'entregado', 'cancelado') DEFAULT 'pendiente',
+    costo_envio DECIMAL(10, 2) DEFAULT 0.00,
+    total DECIMAL(10, 2) DEFAULT 0.00,
+    FOREIGN KEY (id_cliente) REFERENCES cliente(id_cliente) ON DELETE RESTRICT
+) ENGINE=InnoDB;
+
+CREATE TABLE detalle_pedido (
+    id_detalle INT AUTO_INCREMENT PRIMARY KEY,
+    id_pedido INT NOT NULL,
+    id_pizza INT NOT NULL,
+    cantidad INT NOT NULL CHECK (cantidad > 0),
+    precio_unitario DECIMAL(10, 2) NOT NULL,
+    FOREIGN KEY (id_pedido) REFERENCES pedido(id_pedido) ON DELETE CASCADE,
+    FOREIGN KEY (id_pizza) REFERENCES pizza(id_pizza) ON DELETE RESTRICT
+) ENGINE=InnoDB;
+
+CREATE TABLE domicilio (
+    id_domicilio INT AUTO_INCREMENT PRIMARY KEY,
+    id_pedido INT UNIQUE NOT NULL,
+    id_repartidor INT NOT NULL,
+    hora_salida DATETIME NULL,
+    hora_entrega DATETIME NULL,
+    distancia_km DECIMAL(5, 2) NOT NULL,
+    costo_envio DECIMAL(10, 2) NOT NULL,
+    FOREIGN KEY (id_pedido) REFERENCES pedido(id_pedido) ON DELETE CASCADE,
+    FOREIGN KEY (id_repartidor) REFERENCES repartidor(id_repartidor) ON DELETE RESTRICT
+) ENGINE=InnoDB;
+
+CREATE TABLE historial_precios (
+    id_historial INT AUTO_INCREMENT PRIMARY KEY,
+    id_pizza INT NOT NULL,
+    precio_anterior DECIMAL(10, 2) NOT NULL,
+    precio_nuevo DECIMAL(10, 2) NOT NULL,
+    fecha_cambio DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (id_pizza) REFERENCES pizza(id_pizza) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+DROP USER IF EXISTS 'supervisor_cocina'@'localhost';
+CREATE USER 'supervisor_cocina'@'localhost' IDENTIFIED BY 'Cocina2026*';
+GRANT SELECT ON pizzeria_don_piccolo.* TO 'supervisor_cocina'@'localhost';
+GRANT EXECUTE ON PROCEDURE pizzeria_don_piccolo.sp_registrar_detalle_pedido TO 'supervisor_cocina'@'localhost';
+FLUSH PRIVILEGES;
