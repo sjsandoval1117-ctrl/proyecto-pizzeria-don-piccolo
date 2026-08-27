@@ -1,34 +1,74 @@
 USE pizzeria_don_piccolo;
 
-CREATE OR REPLACE VIEW vw_resumen_pedidos_cliente AS
-SELECT 
-    c.id_cliente,
-    c.nombre AS nombre_cliente,
-    COUNT(p.id_pedido) AS cantidad_pedidos,
-    IFNULL(SUM(p.total), 0.00) AS total_gastado
-FROM cliente c
-LEFT JOIN pedido p ON c.id_cliente = p.id_cliente AND p.estado != 'cancelado'
-GROUP BY c.id_cliente, c.nombre;
+DELIMITER $$
 
-CREATE OR REPLACE VIEW vw_desempeno_repartidores AS
-SELECT 
-    r.id_repartidor,
-    r.nombre AS repartidor,
-    r.zona_asignada,
-    COUNT(d.id_domicilio) AS total_entregas,
-    ROUND(AVG(TIMESTAMPDIFF(MINUTE, d.hora_salida, d.hora_entrega)), 1) AS tiempo_promedio_min
-FROM repartidor r
-JOIN domicilio d ON r.id_repartidor = d.id_repartidor
-WHERE d.hora_entrega IS NOT NULL
-GROUP BY r.id_repartidor, r.nombre, r.zona_asignada;
+DROP FUNCTION IF EXISTS fn_calcular_total_pedido$$
+CREATE FUNCTION fn_calcular_total_pedido(p_id_pedido INT) 
+RETURNS DECIMAL(10,2)
+DETERMINISTIC
+READS SQL DATA
+BEGIN
+    DECLARE v_subtotal DECIMAL(10,2) DEFAULT 0.00;
+    DECLARE v_costo_envio DECIMAL(10,2) DEFAULT 0.00;
+    
+    SELECT IFNULL(SUM(cantidad * precio_unitario), 0.00) INTO v_subtotal 
+    FROM detalle_pedido WHERE id_pedido = p_id_pedido;
 
-CREATE OR REPLACE VIEW vw_stock_ingredientes_critico AS
-SELECT 
-    id_ingrediente,
-    nombre,
-    stock_actual,
-    stock_minimo,
-    unidad_medida,
-    (stock_minimo - stock_actual) AS faltante
-FROM ingrediente
-WHERE stock_actual < stock_minimo;
+    SELECT IFNULL(costo_envio, 0.00) INTO v_costo_envio 
+    FROM domicilio WHERE id_pedido = p_id_pedido;
+
+    RETURN (v_subtotal + v_costo_envio) * 1.19;
+END$$
+
+DROP FUNCTION IF EXISTS fn_ganancia_neta_diaria$$
+CREATE FUNCTION fn_ganancia_neta_diaria(p_fecha DATE) 
+RETURNS DECIMAL(10,2)
+DETERMINISTIC
+READS SQL DATA
+BEGIN
+    DECLARE v_total_ventas DECIMAL(10,2) DEFAULT 0.00;
+    DECLARE v_total_costos DECIMAL(10,2) DEFAULT 0.00;
+
+    SELECT IFNULL(SUM(total), 0.00) INTO v_total_ventas 
+    FROM pedido WHERE DATE(fecha_hora) = p_fecha AND estado != 'cancelado';
+
+    SELECT IFNULL(SUM(dp.cantidad * r.cantidad_requerida * ing.costo_unitario), 0.00) INTO v_total_costos
+    FROM pedido p
+    JOIN detalle_pedido dp ON p.id_pedido = dp.id_pedido
+    JOIN receta r ON dp.id_pizza = r.id_pizza
+    JOIN ingrediente ing ON r.id_ingrediente = ing.id_ingrediente
+    WHERE DATE(p.fecha_hora) = p_fecha AND p.estado != 'cancelado';
+
+    RETURN v_total_ventas - v_total_costos;
+END$$
+
+DROP PROCEDURE IF EXISTS sp_registrar_detalle_pedido$$
+CREATE PROCEDURE sp_registrar_detalle_pedido(
+    IN p_id_pedido INT,
+    IN p_id_pizza INT,
+    IN p_cantidad INT,
+    IN p_precio_unitario DECIMAL(10,2)
+)
+BEGIN
+    INSERT INTO detalle_pedido (id_pedido, id_pizza, cantidad, precio_unitario)
+    VALUES (p_id_pedido, p_id_pizza, p_cantidad, p_precio_unitario);
+END$$
+
+DROP PROCEDURE IF EXISTS sp_registrar_entrega_domicilio$$
+CREATE PROCEDURE sp_registrar_entrega_domicilio(
+    IN p_id_domicilio INT,
+    IN p_hora_entrega DATETIME
+)
+BEGIN
+    DECLARE v_id_pedido INT;
+    SELECT id_pedido INTO v_id_pedido FROM domicilio WHERE id_domicilio = p_id_domicilio;
+    IF v_id_pedido IS NOT NULL THEN
+        UPDATE domicilio SET hora_entrega = p_hora_entrega WHERE id_domicilio = p_id_domicilio;
+        UPDATE pedido SET estado = 'entregado' WHERE id_pedido = v_id_pedido;
+    END IF;
+END$$
+
+DELIMITER ;
+
+GRANT EXECUTE ON PROCEDURE pizzeria_don_piccolo.sp_registrar_detalle_pedido TO 'supervisor_cocina'@'localhost';
+FLUSH PRIVILEGES;

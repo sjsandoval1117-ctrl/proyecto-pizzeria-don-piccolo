@@ -23,7 +23,7 @@ CREATE TABLE pizza (
 CREATE TABLE ingrediente (
     id_ingrediente INT AUTO_INCREMENT PRIMARY KEY,
     nombre VARCHAR(80) NOT NULL,
-    stock_actual DECIMAL(10, 2) NOT NULL,
+    stock_actual DECIMAL(10, 2) NOT NULL CHECK (stock_actual >= 0),
     stock_minimo DECIMAL(10, 2) NOT NULL,
     costo_unitario DECIMAL(10, 2) NOT NULL,
     unidad_medida VARCHAR(20) NOT NULL
@@ -105,11 +105,8 @@ INSERT INTO ingrediente (nombre, stock_actual, stock_minimo, costo_unitario, uni
 ('Masa para Pizza', 100.00, 20.00, 2000.00, 'Unidad');
 
 INSERT INTO receta (id_pizza, id_ingrediente, cantidad_requerida) VALUES
-(1, 1, 0.40),
-(1, 2, 0.20),
-(1, 3, 0.25),
-(2, 1, 0.30),
-(2, 2, 0.15);
+(1, 1, 0.40), (1, 2, 0.20), (1, 3, 0.25),
+(2, 1, 0.30), (2, 2, 0.15);
 
 INSERT INTO repartidor (nombre, zona_asignada, estado) VALUES
 ('Pedro Infante', 'Zona Norte', 'disponible'),
@@ -121,118 +118,36 @@ INSERT INTO pedido (id_cliente, fecha_hora, metodo_pago, estado, costo_envio, to
 (2, NOW(), 'tarjeta', 'en preparacion', 4000.00, 32000.00),
 (3, NOW(), 'app', 'pendiente', 3000.00, 21000.00);
 
-INSERT INTO detalle_pedido (id_pedido, id_pizza, cantidad, precio_unitario) VALUES
-(1, 1, 1, 35000.00),
-(2, 2, 1, 28000.00),
-(3, 3, 1, 18000.00);
-
 INSERT INTO domicilio (id_pedido, id_repartidor, hora_salida, hora_entrega, distancia_km, costo_envio) VALUES
 (1, 1, NOW(), NOW(), 3.50, 5000.00),
 (2, 2, NOW(), NULL, 2.10, 4000.00);
 
-INSERT INTO historial_precios (id_pizza, precio_anterior, precio_nuevo, fecha_cambio) VALUES
-(1, 32000.00, 35000.00, NOW()),
-(2, 25000.00, 28000.00, NOW());
-
 DELIMITER $$
 
-DROP FUNCTION IF EXISTS fn_calcular_total_pedido$$
-CREATE FUNCTION fn_calcular_total_pedido(p_id_pedido INT) 
-RETURNS DECIMAL(10,2)
-DETERMINISTIC
-READS SQL DATA
+CREATE TRIGGER trg_descontar_stock_ingredientes
+BEFORE INSERT ON detalle_pedido
+FOR EACH ROW
 BEGIN
-    DECLARE v_subtotal DECIMAL(10,2) DEFAULT 0.00;
-    DECLARE v_costo_envio DECIMAL(10,2) DEFAULT 0.00;
-    DECLARE v_total DECIMAL(10,2) DEFAULT 0.00;
+    DECLARE v_ingrediente_insuficiente VARCHAR(80) DEFAULT NULL;
 
-    SELECT IFNULL(SUM(cantidad * precio_unitario), 0.00) 
-    INTO v_subtotal 
-    FROM detalle_pedido 
-    WHERE id_pedido = p_id_pedido;
-
-    SELECT IFNULL(costo_envio, 0.00) 
-    INTO v_costo_envio 
-    FROM domicilio 
-    WHERE id_pedido = p_id_pedido;
-
-    SET v_total = (v_subtotal + v_costo_envio) * 1.19;
-
-    RETURN v_total;
-END$$
-
-DROP FUNCTION IF EXISTS fn_ganancia_neta_diaria$$
-CREATE FUNCTION fn_ganancia_neta_diaria(p_fecha DATE) 
-RETURNS DECIMAL(10,2)
-DETERMINISTIC
-READS SQL DATA
-BEGIN
-    DECLARE v_total_ventas DECIMAL(10,2) DEFAULT 0.00;
-    DECLARE v_total_costos DECIMAL(10,2) DEFAULT 0.00;
-
-    SELECT IFNULL(SUM(total), 0.00) 
-    INTO v_total_ventas 
-    FROM pedido 
-    WHERE DATE(fecha_hora) = p_fecha AND estado != 'cancelado';
-
-    SELECT IFNULL(SUM(dp.cantidad * r.cantidad_requerida * ing.costo_unitario), 0.00)
-    INTO v_total_costos
-    FROM pedido p
-    JOIN detalle_pedido dp ON p.id_pedido = dp.id_pedido
-    JOIN receta r ON dp.id_pizza = r.id_pizza
+    SELECT ing.nombre INTO v_ingrediente_insuficiente
+    FROM receta r
     JOIN ingrediente ing ON r.id_ingrediente = ing.id_ingrediente
-    WHERE DATE(p.fecha_hora) = p_fecha AND p.estado != 'cancelado';
+    WHERE r.id_pizza = NEW.id_pizza
+      AND ing.stock_actual < (r.cantidad_requerida * NEW.cantidad)
+    LIMIT 1;
 
-    RETURN v_total_ventas - v_total_costos;
-END$$
-
-DROP PROCEDURE IF EXISTS sp_registrar_entrega_domicilio$$
-CREATE PROCEDURE sp_registrar_entrega_domicilio(
-    IN p_id_domicilio INT,
-    IN p_hora_entrega DATETIME
-)
-BEGIN
-    DECLARE v_id_pedido INT;
-
-    SELECT id_pedido INTO v_id_pedido 
-    FROM domicilio 
-    WHERE id_domicilio = p_id_domicilio;
-
-    IF v_id_pedido IS NOT NULL THEN
-        UPDATE domicilio 
-        SET hora_entrega = p_hora_entrega 
-        WHERE id_domicilio = p_id_domicilio;
-
-        UPDATE pedido 
-        SET estado = 'entregado' 
-        WHERE id_pedido = v_id_pedido;
+    IF v_ingrediente_insuficiente IS NOT NULL THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Error: Stock insuficiente para el ingrediente requerido.';
+    ELSE
+        UPDATE ingrediente ing
+        JOIN receta r ON ing.id_ingrediente = r.id_ingrediente
+        SET ing.stock_actual = ing.stock_actual - (r.cantidad_requerida * NEW.cantidad)
+        WHERE r.id_pizza = NEW.id_pizza;
     END IF;
 END$$
 
-DROP PROCEDURE IF EXISTS sp_registrar_detalle_pedido$$
-CREATE PROCEDURE sp_registrar_detalle_pedido(
-    IN p_id_pedido INT,
-    IN p_id_pizza INT,
-    IN p_cantidad INT,
-    IN p_precio_unitario DECIMAL(10,2)
-)
-BEGIN
-    INSERT INTO detalle_pedido (id_pedido, id_pizza, cantidad, precio_unitario)
-    VALUES (p_id_pedido, p_id_pizza, p_cantidad, p_precio_unitario);
-END$$
-
-DROP TRIGGER IF EXISTS trg_descontar_stock_ingredientes$$
-CREATE TRIGGER trg_descontar_stock_ingredientes
-AFTER INSERT ON detalle_pedido
-FOR EACH ROW
-BEGIN
-    UPDATE ingrediente ing
-    JOIN receta r ON ing.id_ingrediente = r.id_ingrediente
-    SET ing.stock_actual = ing.stock_actual - (r.cantidad_requerida * NEW.cantidad)
-    WHERE r.id_pizza = NEW.id_pizza;
-END$$
-
-DROP TRIGGER IF EXISTS trg_auditoria_precio_pizza$$
 CREATE TRIGGER trg_auditoria_precio_pizza
 BEFORE UPDATE ON pizza
 FOR EACH ROW
@@ -243,7 +158,6 @@ BEGIN
     END IF;
 END$$
 
-DROP TRIGGER IF EXISTS trg_liberar_repartidor$$
 CREATE TRIGGER trg_liberar_repartidor
 AFTER UPDATE ON domicilio
 FOR EACH ROW
@@ -255,13 +169,69 @@ BEGIN
     END IF;
 END$$
 
-DELIMITER ;
+CREATE FUNCTION fn_calcular_total_pedido(p_id_pedido INT) 
+RETURNS DECIMAL(10,2)
+DETERMINISTIC
+READS SQL DATA
+BEGIN
+    DECLARE v_subtotal DECIMAL(10,2) DEFAULT 0.00;
+    DECLARE v_costo_envio DECIMAL(10,2) DEFAULT 0.00;
+    
+    SELECT IFNULL(SUM(cantidad * precio_unitario), 0.00) INTO v_subtotal 
+    FROM detalle_pedido WHERE id_pedido = p_id_pedido;
 
-DROP USER IF EXISTS 'supervisor_cocina'@'localhost';
-CREATE USER 'supervisor_cocina'@'localhost' IDENTIFIED BY 'Cocina2026*';
-GRANT SELECT ON pizzeria_don_piccolo.* TO 'supervisor_cocina'@'localhost';
-GRANT EXECUTE ON PROCEDURE pizzeria_don_piccolo.sp_registrar_detalle_pedido TO 'supervisor_cocina'@'localhost';
-FLUSH PRIVILEGES;
+    SELECT IFNULL(costo_envio, 0.00) INTO v_costo_envio 
+    FROM domicilio WHERE id_pedido = p_id_pedido;
+
+    RETURN (v_subtotal + v_costo_envio) * 1.19;
+END$$
+
+CREATE FUNCTION fn_ganancia_neta_diaria(p_fecha DATE) 
+RETURNS DECIMAL(10,2)
+DETERMINISTIC
+READS SQL DATA
+BEGIN
+    DECLARE v_total_ventas DECIMAL(10,2) DEFAULT 0.00;
+    DECLARE v_total_costos DECIMAL(10,2) DEFAULT 0.00;
+
+    SELECT IFNULL(SUM(total), 0.00) INTO v_total_ventas 
+    FROM pedido WHERE DATE(fecha_hora) = p_fecha AND estado != 'cancelado';
+
+    SELECT IFNULL(SUM(dp.cantidad * r.cantidad_requerida * ing.costo_unitario), 0.00) INTO v_total_costos
+    FROM pedido p
+    JOIN detalle_pedido dp ON p.id_pedido = dp.id_pedido
+    JOIN receta r ON dp.id_pizza = r.id_pizza
+    JOIN ingrediente ing ON r.id_ingrediente = ing.id_ingrediente
+    WHERE DATE(p.fecha_hora) = p_fecha AND p.estado != 'cancelado';
+
+    RETURN v_total_ventas - v_total_costos;
+END$$
+
+CREATE PROCEDURE sp_registrar_detalle_pedido(
+    IN p_id_pedido INT,
+    IN p_id_pizza INT,
+    IN p_cantidad INT,
+    IN p_precio_unitario DECIMAL(10,2)
+)
+BEGIN
+    INSERT INTO detalle_pedido (id_pedido, id_pizza, cantidad, precio_unitario)
+    VALUES (p_id_pedido, p_id_pizza, p_cantidad, p_precio_unitario);
+END$$
+
+CREATE PROCEDURE sp_registrar_entrega_domicilio(
+    IN p_id_domicilio INT,
+    IN p_hora_entrega DATETIME
+)
+BEGIN
+    DECLARE v_id_pedido INT;
+    SELECT id_pedido INTO v_id_pedido FROM domicilio WHERE id_domicilio = p_id_domicilio;
+    IF v_id_pedido IS NOT NULL THEN
+        UPDATE domicilio SET hora_entrega = p_hora_entrega WHERE id_domicilio = p_id_domicilio;
+        UPDATE pedido SET estado = 'entregado' WHERE id_pedido = v_id_pedido;
+    END IF;
+END$$
+
+DELIMITER ;
 
 CREATE OR REPLACE VIEW vw_resumen_pedidos_cliente AS
 SELECT 
@@ -279,7 +249,7 @@ SELECT
     r.nombre AS repartidor,
     r.zona_asignada,
     COUNT(d.id_domicilio) AS total_entregas,
-    ROUND(AVG(TIMESTAMPDIFF(MINUTE, d.hora_salida, d.hora_entrega)), 1) AS tiempo_promedio_min
+    ROUND(AVG(TIMESTAMPDIFF(MINUTE, d.hora_salida, d.hora_entrega)), 1) AS tiempo_promedio_min 
 FROM repartidor r
 JOIN domicilio d ON r.id_repartidor = d.id_repartidor
 WHERE d.hora_entrega IS NOT NULL
@@ -296,59 +266,20 @@ SELECT
 FROM ingrediente
 WHERE stock_actual < stock_minimo;
 
-SELECT DISTINCT c.id_cliente, c.nombre, c.correo, p.fecha_hora
-FROM cliente c
-JOIN pedido p ON c.id_cliente = p.id_cliente
-WHERE p.fecha_hora BETWEEN '2026-08-01 00:00:00' AND '2026-08-31 23:59:59';
+(INICIO DE SESION DEL SUPERVISOR)
+DROP USER IF EXISTS 'supervisor_cocina'@'localhost';
+CREATE USER 'supervisor_cocina'@'localhost' IDENTIFIED BY 'Cocina2026*';
+GRANT SELECT ON pizzeria_don_piccolo.* TO 'supervisor_cocina'@'localhost';
+GRANT EXECUTE ON PROCEDURE pizzeria_don_piccolo.sp_registrar_detalle_pedido TO 'supervisor_cocina'@'localhost';
+FLUSH PRIVILEGES;
 
-SELECT 
-    pz.nombre AS pizza,
-    pz.tamano,
-    SUM(dp.cantidad) AS total_unidades_vendidas
-FROM detalle_pedido dp
-JOIN pizza pz ON dp.id_pizza = pz.id_pizza
-GROUP BY pz.id_pizza, pz.nombre, pz.tamano
-ORDER BY total_unidades_vendidas DESC;
+(PRUEBA DEL SUPERVISOR)
+USE pizzeria_don_piccolo;
 
-SELECT 
-    r.nombre AS repartidor,
-    p.id_pedido,
-    p.fecha_hora,
-    p.estado,
-    d.distancia_km
-FROM repartidor r
-JOIN domicilio d ON r.id_repartidor = d.id_repartidor
-JOIN pedido p ON d.id_pedido = p.id_pedido;
+SELECT * FROM pizza;
+SELECT * FROM receta;
+SELECT * FROM ingrediente;
+SELECT * FROM vw_stock_ingredientes_critico;
+SELECT * FROM pedido WHERE estado = 'pendiente';
 
-SELECT 
-    r.zona_asignada,
-    ROUND(AVG(TIMESTAMPDIFF(MINUTE, d.hora_salida, d.hora_entrega)), 2) AS tiempo_promedio_entrega_min
-FROM domicilio d
-JOIN repartidor r ON d.id_repartidor = r.id_repartidor
-WHERE d.hora_entrega IS NOT NULL
-GROUP BY r.zona_asignada;
-
-SELECT 
-    c.id_cliente,
-    c.nombre,
-    SUM(p.total) AS total_invertido
-FROM cliente c
-JOIN pedido p ON c.id_cliente = p.id_cliente
-WHERE p.estado != 'cancelado'
-GROUP BY c.id_cliente, c.nombre
-HAVING SUM(p.total) > 100000.00;
-
-SELECT * FROM pizza
-WHERE nombre LIKE '%Especial%';
-
-SELECT id_cliente, nombre, correo
-FROM cliente
-WHERE id_cliente IN (
-    SELECT id_cliente
-    FROM pedido
-    WHERE MONTH(fecha_hora) = MONTH(CURRENT_DATE()) 
-      AND YEAR(fecha_hora) = YEAR(CURRENT_DATE())
-      AND estado != 'cancelado'
-    GROUP BY id_cliente
-    HAVING COUNT(id_pedido) > 5
-);
+CALL sp_registrar_detalle_pedido(1, 2, 3, 28000.00);

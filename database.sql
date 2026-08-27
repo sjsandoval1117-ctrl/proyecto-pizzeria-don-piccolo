@@ -23,7 +23,7 @@ CREATE TABLE pizza (
 CREATE TABLE ingrediente (
     id_ingrediente INT AUTO_INCREMENT PRIMARY KEY,
     nombre VARCHAR(80) NOT NULL,
-    stock_actual DECIMAL(10, 2) NOT NULL,
+    stock_actual DECIMAL(10, 2) NOT NULL CHECK (stock_actual >= 0),
     stock_minimo DECIMAL(10, 2) NOT NULL,
     costo_unitario DECIMAL(10, 2) NOT NULL,
     unidad_medida VARCHAR(20) NOT NULL
@@ -105,11 +105,8 @@ INSERT INTO ingrediente (nombre, stock_actual, stock_minimo, costo_unitario, uni
 ('Masa para Pizza', 100.00, 20.00, 2000.00, 'Unidad');
 
 INSERT INTO receta (id_pizza, id_ingrediente, cantidad_requerida) VALUES
-(1, 1, 0.40),
-(1, 2, 0.20),
-(1, 3, 0.25),
-(2, 1, 0.30),
-(2, 2, 0.15);
+(1, 1, 0.40), (1, 2, 0.20), (1, 3, 0.25),
+(2, 1, 0.30), (2, 2, 0.15);
 
 INSERT INTO repartidor (nombre, zona_asignada, estado) VALUES
 ('Pedro Infante', 'Zona Norte', 'disponible'),
@@ -121,22 +118,11 @@ INSERT INTO pedido (id_cliente, fecha_hora, metodo_pago, estado, costo_envio, to
 (2, NOW(), 'tarjeta', 'en preparacion', 4000.00, 32000.00),
 (3, NOW(), 'app', 'pendiente', 3000.00, 21000.00);
 
-INSERT INTO detalle_pedido (id_pedido, id_pizza, cantidad, precio_unitario) VALUES
-(1, 1, 1, 35000.00),
-(2, 2, 1, 28000.00),
-(3, 3, 1, 18000.00);
-
 INSERT INTO domicilio (id_pedido, id_repartidor, hora_salida, hora_entrega, distancia_km, costo_envio) VALUES
 (1, 1, NOW(), NOW(), 3.50, 5000.00),
 (2, 2, NOW(), NULL, 2.10, 4000.00);
 
-INSERT INTO historial_precios (id_pizza, precio_anterior, precio_nuevo, fecha_cambio) VALUES
-(1, 32000.00, 35000.00, NOW()),
-(2, 25000.00, 28000.00, NOW());
-
 DROP USER IF EXISTS 'supervisor_cocina'@'localhost';
 CREATE USER 'supervisor_cocina'@'localhost' IDENTIFIED BY 'Cocina2026*';
 GRANT SELECT ON pizzeria_don_piccolo.* TO 'supervisor_cocina'@'localhost';
-GRANT EXECUTE ON PROCEDURE pizzeria_don_piccolo.sp_registrar_detalle_pedido TO 'supervisor_cocina'@'localhost';
 FLUSH PRIVILEGES;
-

@@ -1,78 +1,58 @@
 USE pizzeria_don_piccolo;
 
-DELIMITER $$
+SELECT DISTINCT c.id_cliente, c.nombre, c.correo, p.fecha_hora
+FROM cliente c
+JOIN pedido p ON c.id_cliente = p.id_cliente
+WHERE p.fecha_hora BETWEEN '2026-08-01 00:00:00' AND '2026-08-31 23:59:59';
 
-DROP FUNCTION IF EXISTS fn_calcular_total_pedido$$
-CREATE FUNCTION fn_calcular_total_pedido(p_id_pedido INT) 
-RETURNS DECIMAL(10,2)
-DETERMINISTIC
-READS SQL DATA
-BEGIN
-    DECLARE v_subtotal DECIMAL(10,2) DEFAULT 0.00;
-    DECLARE v_costo_envio DECIMAL(10,2) DEFAULT 0.00;
-    DECLARE v_total DECIMAL(10,2) DEFAULT 0.00;
+SELECT 
+    pz.nombre AS pizza,
+    pz.tamano,
+    SUM(dp.cantidad) AS total_unidades_vendidas
+FROM detalle_pedido dp
+JOIN pizza pz ON dp.id_pizza = pz.id_pizza
+GROUP BY pz.id_pizza, pz.nombre, pz.tamano
+ORDER BY total_unidades_vendidas DESC;
 
-    SELECT IFNULL(SUM(cantidad * precio_unitario), 0.00) 
-    INTO v_subtotal 
-    FROM detalle_pedido 
-    WHERE id_pedido = p_id_pedido;
+SELECT 
+    r.nombre AS repartidor,
+    p.id_pedido,
+    p.fecha_hora,
+    p.estado,
+    d.distancia_km
+FROM repartidor r
+JOIN domicilio d ON r.id_repartidor = d.id_repartidor
+JOIN pedido p ON d.id_pedido = p.id_pedido;
 
-    SELECT IFNULL(costo_envio, 0.00) 
-    INTO v_costo_envio 
-    FROM domicilio 
-    WHERE id_pedido = p_id_pedido;
+SELECT 
+    r.zona_asignada,
+    ROUND(AVG(TIMESTAMPDIFF(MINUTE, d.hora_salida, d.hora_entrega)), 2) AS tiempo_promedio_entrega_min
+FROM domicilio d
+JOIN repartidor r ON d.id_repartidor = r.id_repartidor
+WHERE d.hora_entrega IS NOT NULL
+GROUP BY r.zona_asignada;
 
-    SET v_total = (v_subtotal + v_costo_envio) * 1.19;
+SELECT 
+    c.id_cliente,
+    c.nombre,
+    SUM(p.total) AS total_invertido
+FROM cliente c
+JOIN pedido p ON c.id_cliente = p.id_cliente
+WHERE p.estado != 'cancelado'
+GROUP BY c.id_cliente, c.nombre
+HAVING SUM(p.total) > 100000.00;
 
-    RETURN v_total;
-END$$
+SELECT * FROM pizza
+WHERE nombre LIKE '%Especial%';
 
-DROP FUNCTION IF EXISTS fn_ganancia_neta_diaria$$
-CREATE FUNCTION fn_ganancia_neta_diaria(p_fecha DATE) 
-RETURNS DECIMAL(10,2)
-DETERMINISTIC
-READS SQL DATA
-BEGIN
-    DECLARE v_total_ventas DECIMAL(10,2) DEFAULT 0.00;
-    DECLARE v_total_costos DECIMAL(10,2) DEFAULT 0.00;
-
-    SELECT IFNULL(SUM(total), 0.00) 
-    INTO v_total_ventas 
-    FROM pedido 
-    WHERE DATE(fecha_hora) = p_fecha AND estado != 'cancelado';
-
-    SELECT IFNULL(SUM(dp.cantidad * r.cantidad_requerida * ing.costo_unitario), 0.00)
-    INTO v_total_costos
-    FROM pedido p
-    JOIN detalle_pedido dp ON p.id_pedido = dp.id_pedido
-    JOIN receta r ON dp.id_pizza = r.id_pizza
-    JOIN ingrediente ing ON r.id_ingrediente = ing.id_ingrediente
-    WHERE DATE(p.fecha_hora) = p_fecha AND p.estado != 'cancelado';
-
-    RETURN v_total_ventas - v_total_costos;
-END$$
-
-DROP PROCEDURE IF EXISTS sp_registrar_entrega_domicilio$$
-CREATE PROCEDURE sp_registrar_entrega_domicilio(
-    IN p_id_domicilio INT,
-    IN p_hora_entrega DATETIME
-)
-BEGIN
-    DECLARE v_id_pedido INT;
-
-    SELECT id_pedido INTO v_id_pedido 
-    FROM domicilio 
-    WHERE id_domicilio = p_id_domicilio;
-
-    IF v_id_pedido IS NOT NULL THEN
-        UPDATE domicilio 
-        SET hora_entrega = p_hora_entrega 
-        WHERE id_domicilio = p_id_domicilio;
-
-        UPDATE pedido 
-        SET estado = 'entregado' 
-        WHERE id_pedido = v_id_pedido;
-    END IF;
-END$$
-
-DELIMITER ;
+SELECT id_cliente, nombre, correo
+FROM cliente
+WHERE id_cliente IN (
+    SELECT id_cliente
+    FROM pedido
+    WHERE MONTH(fecha_hora) = MONTH(CURRENT_DATE()) 
+      AND YEAR(fecha_hora) = YEAR(CURRENT_DATE())
+      AND estado != 'cancelado'
+    GROUP BY id_cliente
+    HAVING COUNT(id_pedido) > 5
+);
