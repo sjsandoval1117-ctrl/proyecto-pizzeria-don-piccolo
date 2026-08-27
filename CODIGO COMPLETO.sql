@@ -87,14 +87,52 @@ CREATE TABLE historial_precios (
     FOREIGN KEY (id_pizza) REFERENCES pizza(id_pizza) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
+INSERT INTO cliente (nombre, telefono, direccion, correo) VALUES
+('Sara Sandoval', '3001234567', 'Calle 10 #20-30', 'sara@email.com'),
+('Carlos Mendoza', '3159876543', 'Carrera 15 #45-12', 'carlos@email.com'),
+('Ana Gómez', '3104567890', 'Avenida 8 #12-04', 'ana@email.com');
 
--- SEGURIDAD Y PERMISOS DEL USUARIO SUPERVISOR_COCINA
+INSERT INTO pizza (nombre, tamano, precio_base, tipo, disponible) VALUES
+('Especial Don Piccolo', 'Familiar', 35000.00, 'especial', TRUE),
+('Hawaiana', 'Mediana', 28000.00, 'clasica', TRUE),
+('Pepperoni', 'Personal', 18000.00, 'clasica', TRUE),
+('Vegetariana', 'Familiar', 32000.00, 'vegetariana', TRUE);
 
-DROP USER IF EXISTS 'supervisor_cocina'@'localhost';
-CREATE USER 'supervisor_cocina'@'localhost' IDENTIFIED BY 'Cocina2026*';
-GRANT SELECT ON pizzeria_don_piccolo.* TO 'supervisor_cocina'@'localhost';
-GRANT EXECUTE ON PROCEDURE pizzeria_don_piccolo.sp_registrar_detalle_pedido TO 'supervisor_cocina'@'localhost';
-FLUSH PRIVILEGES;
+INSERT INTO ingrediente (nombre, stock_actual, stock_minimo, costo_unitario, unidad_medida) VALUES
+('Queso Mozzarella', 50.00, 10.00, 12000.00, 'Kg'),
+('Salsa de Tomate', 30.00, 5.00, 5000.00, 'Litro'),
+('Pepperoni', 20.00, 3.00, 18000.00, 'Kg'),
+('Masa para Pizza', 100.00, 20.00, 2000.00, 'Unidad');
+
+INSERT INTO receta (id_pizza, id_ingrediente, cantidad_requerida) VALUES
+(1, 1, 0.40),
+(1, 2, 0.20),
+(1, 3, 0.25),
+(2, 1, 0.30),
+(2, 2, 0.15);
+
+INSERT INTO repartidor (nombre, zona_asignada, estado) VALUES
+('Pedro Infante', 'Zona Norte', 'disponible'),
+('Luisa López', 'Zona Centro', 'disponible'),
+('Carlos Rueda', 'Zona Sur', 'no disponible');
+
+INSERT INTO pedido (id_cliente, fecha_hora, metodo_pago, estado, costo_envio, total) VALUES
+(1, NOW(), 'efectivo', 'entregado', 5000.00, 40000.00),
+(2, NOW(), 'tarjeta', 'en preparacion', 4000.00, 32000.00),
+(3, NOW(), 'app', 'pendiente', 3000.00, 21000.00);
+
+INSERT INTO detalle_pedido (id_pedido, id_pizza, cantidad, precio_unitario) VALUES
+(1, 1, 1, 35000.00),
+(2, 2, 1, 28000.00),
+(3, 3, 1, 18000.00);
+
+INSERT INTO domicilio (id_pedido, id_repartidor, hora_salida, hora_entrega, distancia_km, costo_envio) VALUES
+(1, 1, NOW(), NOW(), 3.50, 5000.00),
+(2, 2, NOW(), NULL, 2.10, 4000.00);
+
+INSERT INTO historial_precios (id_pizza, precio_anterior, precio_nuevo, fecha_cambio) VALUES
+(1, 32000.00, 35000.00, NOW()),
+(2, 25000.00, 28000.00, NOW());
 
 DELIMITER $$
 
@@ -171,6 +209,18 @@ BEGIN
     END IF;
 END$$
 
+DROP PROCEDURE IF EXISTS sp_registrar_detalle_pedido$$
+CREATE PROCEDURE sp_registrar_detalle_pedido(
+    IN p_id_pedido INT,
+    IN p_id_pizza INT,
+    IN p_cantidad INT,
+    IN p_precio_unitario DECIMAL(10,2)
+)
+BEGIN
+    INSERT INTO detalle_pedido (id_pedido, id_pizza, cantidad, precio_unitario)
+    VALUES (p_id_pedido, p_id_pizza, p_cantidad, p_precio_unitario);
+END$$
+
 DROP TRIGGER IF EXISTS trg_descontar_stock_ingredientes$$
 CREATE TRIGGER trg_descontar_stock_ingredientes
 AFTER INSERT ON detalle_pedido
@@ -206,6 +256,12 @@ BEGIN
 END$$
 
 DELIMITER ;
+
+DROP USER IF EXISTS 'supervisor_cocina'@'localhost';
+CREATE USER 'supervisor_cocina'@'localhost' IDENTIFIED BY 'Cocina2026*';
+GRANT SELECT ON pizzeria_don_piccolo.* TO 'supervisor_cocina'@'localhost';
+GRANT EXECUTE ON PROCEDURE pizzeria_don_piccolo.sp_registrar_detalle_pedido TO 'supervisor_cocina'@'localhost';
+FLUSH PRIVILEGES;
 
 CREATE OR REPLACE VIEW vw_resumen_pedidos_cliente AS
 SELECT 
